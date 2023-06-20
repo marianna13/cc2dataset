@@ -17,18 +17,21 @@ import math
 import time
 from .spark_session_builder import build_spark_session
 from io import BytesIO
+from urllib.parse import urljoin
 
 
-def valid_video_link(link):
-    valid_http = link.get("url", "").startswith("http")
+def valid_video_link(link, base_url):
     valid_video = any(
         link.get("url", "").endswith(ext) for ext in [".avi", ".mp4", ".mkv", ".webm", ".mov", ".mpg", ".mpeg", ".m4v"]
     )
-    return valid_http and valid_video
+    if not valid_video:
+        return False
+    link_make_absolute_url(link, base_url, "url")
+    return link.get("url", "").startswith("http")
 
 
-def extract_video_from_links(links):
-    filtered_links = [{"url": link["url"], "alt": link.get("text", "")} for link in links if valid_video_link(link)]
+def extract_video_from_links(links, base_url):
+    filtered_links = [{"url": link["url"], "alt": link.get("text", "")} for link in links if valid_video_link(link, base_url)]
     return filtered_links
 
 
@@ -53,58 +56,76 @@ text_extensions = set(
 )
 
 
-def valid_text_link(link):
-    if not link.get("url", "").startswith("http"):
-        return False
+def valid_text_link(link, base_url):
     splits = link.get("url", "").split(".")
     if len(splits) < 2:
         return False
     if splits[-1] not in text_extensions:
         return False
-    return True
+    link_make_absolute_url(link, base_url, "url")
+    return link.get("url", "").startswith("http")
 
 
-def extract_text_from_links(links):
-    filtered_links = [{"url": link["url"], "alt": link.get("text", "")} for link in links if valid_text_link(link)]
+def extract_text_from_links(links, base_url):
+    filtered_links = [{"url": link["url"], "alt": link.get("text", "")} for link in links if valid_text_link(link, base_url)]
     return filtered_links
 
 
-def valid_audio_link(link):
-    valid_http = link.get("url", "").startswith("http")
+def valid_audio_link(link, base_url):
     valid_audio = any(link.get("url", "").endswith(ext) for ext in [".ogg", ".wav", ".mp3", ".flac", ".m4a"])
-    return valid_http and valid_audio
+    if valid_audio:
+        return False
+    link_make_absolute_url(link, base_url, "url")
+    return link.get("url", "").startswith("http")
 
 
-def extract_audio_from_links(links):
+def extract_audio_from_links(links, base_url):
     """Extract image from links"""
-    filtered_links = [{"url": link["url"], "alt": link.get("text", "")} for link in links if valid_audio_link(link)]
+    filtered_links = [{"url": link["url"], "alt": link.get("text", "")} for link in links if valid_audio_link(link, base_url)]
     return filtered_links
 
 
-def valid_image_link(link):
+def valid_image_link(link, base_url):
     valid_path = link.get("path", "") == "IMG@/src"
     valid_alt = len(link.get("alt", "")) > 0
-    valid_http = link.get("url", "").startswith("http")
-    return valid_path and valid_http and valid_alt
+    if not (valid_path and valid_alt):
+        return False
+    link_make_absolute_url(link, base_url, "url")
+    return link.get("url", "").startswith("http")
 
 
-def extract_image_from_links(links):
+def extract_image_from_links(links, base_url):
     """Extract image from links"""
-    filtered_links = [{"url": link["url"], "alt": link["alt"]} for link in links if valid_image_link(link)]
-    return filtered_links
+    for link in links:
+        if valid_image_link(link, base_url):
+            yield {"url": link["url"], "alt": link["alt"], "uid": str(hash(link["alt"] + link["url"]))}
+    # filtered_links = [{"url": link["url"], "alt": link["alt"]} for link in links if valid_image_link(link, base_url)]
+    # return filtered_links
 
 
-def extract_documents_from_links(links, document_type):
+def link_make_absolute_url(link, base_url, key="url"):
+    if not key in link:
+        return
+    url = link[key]
+    if url.startswith("http://") or url.startswith("https://"):
+        return
+    try:
+        link[key] = urljoin(base_url, url)
+    except ValueError:
+        return
+
+
+def extract_documents_from_links(links, document_type, base_url):
     """Extract documents from links ; this function returns a list of dict {"alt": ..., "url": ...}"""
 
     if document_type == "image":
-        return extract_image_from_links(links)
+        return extract_image_from_links(links, base_url)
     elif document_type == "audio":
-        return extract_audio_from_links(links)
+        return extract_audio_from_links(links, base_url)
     elif document_type == "text":
-        return extract_text_from_links(links)
+        return extract_text_from_links(links, base_url)
     elif document_type == "video":
-        return extract_video_from_links(links)
+        return extract_video_from_links(links, base_url)
     else:
         raise ValueError(f"Unknown document type {document_type}")
 
@@ -132,33 +153,49 @@ def extract_documents_from_wat(stream, document_type):
 
             links = metadata["Links"]
 
-            filtered_links = extract_documents_from_links(links, document_type)
-            for link in filtered_links:
-                link["uid"] = str(hashlib.md5((link["alt"] + link["url"]).encode()).hexdigest())
+            # extract base URL to resolve relative URLs
+            base_url = envelope["WARC-Header-Metadata"]["WARC-Target-URI"]
+            if "Head" in metadata and "Base" in metadata["Head"]:
+                try:
+                    base_url = urljoin(base_url, metadata["Head"]["Base"])
+                except ValueError: pass
+
+            filtered_links = extract_documents_from_links(links, document_type, base_url)
+            # for link in filtered_links:
+                # link["uid"] = str(hashlib.md5((link["alt"] + link["url"]).encode()).hexdigest())
             all_links.extend(filtered_links)
     except Exception as e:  # pylint: disable=broad-except
-        logger.info(e)
-        logger.info("A shard failed to parse")
+        # logger.info(e)
+        # logger.info("A shard failed to parse")
         return []
 
     return all_links
+
+def switch_path(path):
+    if "https://data.commoncrawl.org/" in path:
+        path = path.replace("https://data.commoncrawl.org/", "s3://commoncrawl/")
+    elif "s3://commoncrawl/" in path:
+        path = path.replace("s3://commoncrawl/", "https://data.commoncrawl.org/")
+    return path
 
 
 def process_wat(path, document_type):
     """Process a single wat file"""
     begin_read = timer()
     with fsspec.open(path, "rb") as f:
-        for i in range(10):
+        i = 0
+        while True:
+            i += 1
             try:
                 tf = BytesIO(f.read())
                 break
             except Exception as ex:  # pylint: disable=broad-except
-                if i == 9:
-                    logger.info("failed 10 times, skipping ", path)
-                    return
-                logger.info(ex)
-                logger.info(f"retrying reading {i}/10")
-                time.sleep(1)
+                # if i == 9:
+                #     # logger.info("failed 10 times, skipping ", path)
+                #     return
+                path = switch_path(path)
+                # logger.info(f"retrying reading {i}")
+                # time.sleep(1)
 
         for e in extract_documents_from_wat(tf, document_type):
             yield (e["uid"], e["url"], e["alt"])
@@ -221,10 +258,10 @@ def deduplicate_repartition_count(df, output_path, wat_count, spark, shuffle=Fal
     repartitioned = uniques.repartition(max(256, wat_count // 500))
     repartitioned.write.mode("overwrite").parquet(output_path)
     e = time.time()
-    logger.info(f"Took {e - s} seconds")
-    logger.info("Computing size")
+    print(f"Took {e - s} seconds")
+    print("Computing size")
     df = spark.read.parquet(output_path)
-    logger.info(f"Size: {df.count()}")
+    print(f"Size: {df.count()}")
 
 
 def process_one_part(output_path, wat_index_files, build_spark, shuffle, document_type, source_cc_protocol):
@@ -274,11 +311,11 @@ def process_multi_part(
         end = (i + 1) * wat_per_part
         part_path = f"{output_path}/part_{i}"
         part_paths.append(part_path)
-        logger.info(f"Processing part {i} from {start} to {end} into {part_path}")
+        print(f"Processing part {i} from {start} to {end} into {part_path}")
         process_one_part(part_path, wat_index_files[start:end], build_spark, False, document_type, source_cc_protocol)
 
     spark = build_spark()
-    logger.info("Merging parts")
+    print("Merging parts")
     df = None
     part_paths = [f"{output_path}/part_{i}" for i in range(0, multipart)]
     for part_path in part_paths:
