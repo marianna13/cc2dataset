@@ -21,7 +21,7 @@ cols = ["uid", "url", "alt", "cc_filename", "page_url"]
 
 
 def test_single_warc_image():
-    results = retry(lambda: process_wat(test_url, document_type="image"))
+    results = retry(lambda: process_wat(test_url, "image"))
     df = pd.DataFrame(results, columns=cols)
     assert len(df) == 405232
     assert df["uid"][3] == "2a64f921d7ced2fed91e82eeb56338cd"

@@ -12,6 +12,8 @@ It also runs deduplication against url+text in order to save on output space and
 This makes it possible to do the first step of building a dataset like [laion5B](https://laion.ai/blog/laion-5b/) in 70k cpu core hours. (`5*10^6*50/(3600)`)
 That's `$2.8k` using aws EC2 (0.04$/core hour)
 
+If you believe in making reusable tools to make data easy to use for ML and you would like to contribute, please join the [DataToML](https://discord.gg/ep8yUUtCnp) chat.
+
 ## Intended usage
 
 This tool produces a collection of link + caption. It is meant as the stage 1 of creating a dataset. It does deduplication and as minimal as possible filtering (does it look like an url / is the caption non empty).
@@ -28,10 +30,12 @@ CC is big and located at s3 us east 1, so it makes a lot of sense in term of net
 ## Document type
 
 This tool support extracting several documents from CC:
-* image/text: about 300B after dedup
-* audio/text: about 2B after dedup
-* text doc : about 10B after dedup
-* video/text: about 2B after dedup
+
+* image/text: 88B after dedup
+* image/text even with empty text: 229B after dedup
+* audio/text: 500M after dedup
+* text doc : 5B after dedup
+* video/text: 300M after dedup
 
 They can be selected with eg `--document_type audio`.
 You may experiment with more document kinds by running `python example single_warc_example.py` and exploring the resulting output.parquet.
