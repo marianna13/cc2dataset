@@ -103,7 +103,10 @@ if __name__ == '__main__':
 
         all_links.extend(random.sample(wat_links, num_links_per_wat))
 
-    pd.DataFrame(all_links, columns=['url']).to_parquet('all_links.parquet')
+
+
+    all_links_df = pd.DataFrame(all_links, columns=['url']).drop_duplicates('url')
+    all_links_df.to_parquet('all_links.parquet')
 
     
     n_proc = 64
